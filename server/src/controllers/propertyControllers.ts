@@ -1,19 +1,3 @@
-/**
- * Express.js API endpoints for managing properties in a real estate application.
- * Provides functionality to retrieve properties (filtered by various criteria including geospatial proximity),
- * fetch a single property with standardized coordinates, and create new properties with S3 photo uploads
- * and geocoded locations. Uses Prisma with PostgreSQL/PostGIS for database operations and AWS S3 for file storage.
- * 
- * @module propertyController
- * @requires express
- * @requires @prisma/client
- * @requires @terraformer/wkt
- * @requires @aws-sdk/client-s3
- * @requires @aws-sdk/lib-storage
- * @requires axios
- */
-
-
 import { Request, Response } from "express";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { wktToGeoJSON } from "@terraformer/wkt";
@@ -21,127 +5,120 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { Location } from "@prisma/client";
 import { Upload } from "@aws-sdk/lib-storage";
 import axios from "axios";
+
 const prisma = new PrismaClient();
+
 const s3Client = new S3Client({
-    region: process.env.AWS_REGION,
-})
+  region: process.env.AWS_REGION,
+});
+
 export const getProperties = async (
   req: Request,
   res: Response
 ): Promise<void> => {
   try {
     const {
-        favoriteIds,
-        priceMin,
-        priceMax,
-        beds,
-        baths,
-        propertyType,
-        squareFeetMin,
-        squareFeetMax,
-        amenities,
-        availableFrom,
-        latitude,
-        longitude,
+      favoriteIds,
+      priceMin,
+      priceMax,
+      beds,
+      baths,
+      propertyType,
+      squareFeetMin,
+      squareFeetMax,
+      amenities,
+      availableFrom,
+      latitude,
+      longitude,
     } = req.query;
 
-
-    // with a where condition 
-    // just set up the query with the params that are not undefined
     let whereConditions: Prisma.Sql[] = [];
 
     if (favoriteIds) {
       const favoriteIdsArray = (favoriteIds as string).split(",").map(Number);
       whereConditions.push(
-        Prisma.sql`id IN (${Prisma.join(favoriteIdsArray)})` // search for the ids of the properties
-      )
+        Prisma.sql`p.id IN (${Prisma.join(favoriteIdsArray)})`
+      );
     }
 
     if (priceMin) {
       whereConditions.push(
-        Prisma.sql`pricePerMonth >= ${Number(priceMin)}` // search for the price of the properties
-      )
+        Prisma.sql`p."pricePerMonth" >= ${Number(priceMin)}`
+      );
     }
 
     if (priceMax) {
       whereConditions.push(
-        Prisma.sql`pricePerMonth <= ${Number(priceMax)}` // search for the price of the properties
-      )
+        Prisma.sql`p."pricePerMonth" <= ${Number(priceMax)}`
+      );
     }
 
     if (beds && beds !== "any") {
-      whereConditions.push(
-        Prisma.sql`p.beds >= ${Number(beds)}` // search for the beds of the properties
-      )
+      whereConditions.push(Prisma.sql`p.beds >= ${Number(beds)}`);
     }
 
     if (baths && baths !== "any") {
-      whereConditions.push(
-        Prisma.sql`p.baths >= ${Number(baths)}` // search for the beds of the properties
-      )
+      whereConditions.push(Prisma.sql`p.baths >= ${Number(baths)}`);
     }
 
     if (squareFeetMin) {
       whereConditions.push(
-        Prisma.sql`p."squareFeet" >= ${Number(squareFeetMin)}` // search for the square feet of the properties
-      )
+        Prisma.sql`p."squareFeet" >= ${Number(squareFeetMin)}`
+      );
     }
 
     if (squareFeetMax) {
       whereConditions.push(
-        Prisma.sql`p."squareFeet" <= ${Number(squareFeetMax)}` // search for the square feet of the properties
-      )
+        Prisma.sql`p."squareFeet" <= ${Number(squareFeetMax)}`
+      );
     }
 
     if (propertyType && propertyType !== "any") {
       whereConditions.push(
-        Prisma.sql`p."propertyType" = ${propertyType}::"PropertyType"` // search for the property type of the properties
-      )
+        Prisma.sql`p."propertyType" = ${propertyType}::"PropertyType"`
+      );
     }
 
     if (amenities && amenities !== "any") {
       const amenitiesArray = (amenities as string).split(",");
-      whereConditions.push(
-        Prisma.sql`p.amenities @> ${amenitiesArray}` // search for the amenities of the properties
-      )
+      whereConditions.push(Prisma.sql`p.amenities @> ${amenitiesArray}`);
     }
 
-    if (availableFrom) {
-      const availableFromDate = typeof availableFrom === "string" ? availableFrom : null;
+    if (availableFrom && availableFrom !== "any") {
+      const availableFromDate =
+        typeof availableFrom === "string" ? availableFrom : null;
       if (availableFromDate) {
         const date = new Date(availableFromDate);
         if (!isNaN(date.getTime())) {
           whereConditions.push(
             Prisma.sql`EXISTS (
-              SELECT 1 FROM "Lease" l
-              WHERE l."propertyId" = p.id
+              SELECT 1 FROM "Lease" l 
+              WHERE l."propertyId" = p.id 
               AND l."startDate" <= ${date.toISOString()}
-              )`
+            )`
           );
         }
       }
-
     }
 
     if (latitude && longitude) {
-      const lat = parseFloat(latitude as string);   // values are cast to string and converted to floating-point numbers
-      const lon = parseFloat(longitude as string);
-      const rediusInKilometers = 1000; 
-      const degrees = rediusInKilometers / 111.32; // 1 degree is approximately 111.32 km
+      const lat = parseFloat(latitude as string);
+      const lng = parseFloat(longitude as string);
+      const radiusInKilometers = 1000;
+      const degrees = radiusInKilometers / 111; // Converts kilometers to degrees
 
       whereConditions.push(
         Prisma.sql`ST_DWithin(
-        l.coordinates::geometry,
-        ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326),
-        ${degrees})`
+          l.coordinates::geometry,
+          ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326),
+          ${degrees}
+        )`
       );
     }
 
-
-    // Construct the SQL query
-    // Use Prisma.sql to safely construct the SQL query
     const completeQuery = Prisma.sql`
-        SELECT p.*,
+      SELECT 
+        p.*,
         json_build_object(
           'id', l.id,
           'address', l.address,
@@ -152,20 +129,20 @@ export const getProperties = async (
           'coordinates', json_build_object(
             'longitude', ST_X(l."coordinates"::geometry),
             'latitude', ST_Y(l."coordinates"::geometry)
-          ) as location
-        FROM "Property" p
-        JOIN "Location" l ON p."locationId" = l.id
-        ${
-            whereConditions.length > 0
-              ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`
-              : Prisma.empty
-        }
-        ;`
+          )
+        ) as location
+      FROM "Property" p
+      JOIN "Location" l ON p."locationId" = l.id
+      ${
+        whereConditions.length > 0
+          ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`
+          : Prisma.empty
+      }
+    `;
 
-        const properties = await prisma.$queryRaw(completeQuery);  // Execute the query
+    const properties = await prisma.$queryRaw(completeQuery);
 
-        res.json(properties);  // Send the result as JSON
-
+    res.json(properties);
   } catch (error: any) {
     res
       .status(500)
@@ -174,67 +151,62 @@ export const getProperties = async (
 };
 
 export const getProperty = async (
-    req: Request,
-    res: Response
+  req: Request,
+  res: Response
 ): Promise<void> => {
-    try {
-        const { id } = req.params;
-        const property = await prisma.property.findUnique({
-            where: { id: Number(id) },
-            include: {
-                location: true,
-            },
-        });
+  try {
+    const { id } = req.params;
+    const property = await prisma.property.findUnique({
+      where: { id: Number(id) },
+      include: {
+        location: true,
+      },
+    });
 
+    if (property) {
+      const coordinates: { coordinates: string }[] =
+        await prisma.$queryRaw`SELECT ST_asText(coordinates) as coordinates from "Location" where id = ${property.location.id}`;
 
-        if (property) {
-          const coordinates: { coordinates: string }[] =
-            await prisma.$queryRaw`SELECT ST_asText(coordinates) as coordinates FROM "Location" WHERE id = ${property.location.id}`;
+      const geoJSON: any = wktToGeoJSON(coordinates[0]?.coordinates || "");
+      const longitude = geoJSON.coordinates[0];
+      const latitude = geoJSON.coordinates[1];
 
-
-            const geoJSON: any = wktToGeoJSON(coordinates[0]?.coordinates || "");
-            const longitude = geoJSON.coordinates[0];
-            const latitude = geoJSON.coordinates[1];
-
-            const propertyWithCoordinates = {
-                ...property,
-                location: {
-                ...property.location,
-                coordinates: {
-                    longitude,
-                    latitude,
-                },
-                },
-            };
-            res.json(propertyWithCoordinates);
-
-
-            }
+      const propertyWithCoordinates = {
+        ...property,
+        location: {
+          ...property.location,
+          coordinates: {
+            longitude,
+            latitude,
+          },
+        },
+      };
+      res.json(propertyWithCoordinates);
     }
-    catch (error: any) {
-        res
-        .status(500)
-        .json({ message: `Error retrieving property: ${error.message}` });
+  } catch (err: any) {
+    res
+      .status(500)
+      .json({ message: `Error retrieving property: ${err.message}` });
   }
-}
+};
 
 export const createProperty = async (
-    req: Request,
-    res: Response
+  req: Request,
+  res: Response
 ): Promise<void> => {
-    try {
-        const files = req.files as Express.Multer.File[]; // Cast the files to the correct type
-        const {
-            address,
-            city,
-            state,
-            country,
-            postalCode,
-            managerCognitoId,
-            ...propertyData
-        } = req.body;
+  try {
+    const files = req.files as Express.Multer.File[];
+    const {
+      address,
+      city,
+      state,
+      country,
+      postalCode,
+      managerCognitoId,
+      ...propertyData
+    } = req.body;
 
-        const photoUrls = await Promise.all(
+    const photoUrls = await Promise.all(
       files.map(async (file) => {
         const uploadParams = {
           Bucket: process.env.S3_BUCKET_NAME!,
@@ -313,12 +285,9 @@ export const createProperty = async (
     });
 
     res.status(201).json(newProperty);
-
-
-    }
-    catch (error: any) {
-        res
-        .status(500)
-        .json({ message: `Error creating property: ${error.message}` });
-    }
-}
+  } catch (err: any) {
+    res
+      .status(500)
+      .json({ message: `Error creating property: ${err.message}` });
+  }
+};
