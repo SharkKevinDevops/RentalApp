@@ -20,93 +20,104 @@ import {
 import { Label } from "@/components/ui/label";
 
 const FiltersFull = () => {
+  const dispatch = useDispatch();
+  const router = useRouter();
+  const pathname = usePathname();
+  const filters = useAppSelector((state) => state.global.filters);
+  const [localFilters, setLocalFilters] = useState(initialState.filters);
+  const isFiltersFullOpen = useAppSelector(
+    (state) => state.global.isFiltersFullOpen
+  );
 
-    const dispatch = useDispatch();
-        const router = useRouter();
-        const pathname = usePathname();
-        const filters = useAppSelector((state) => state.global.filters);
-        const [ localFilters, setLocalFilters ] = useState(initialState.filters)
-        const isFiltersFullOpen = useAppSelector(
-            (state) => state.global.isFiltersFullOpen
-        );
-    
+  const updateURL = debounce((newFilters: FiltersState) => {
+    const cleanFilters = cleanParams(newFilters);
+    const updatedSearchParams = new URLSearchParams();
 
-        const updateURL = debounce((newFilters: FiltersState) => {
-            const cleanFilters = cleanParams(newFilters);
-            const updatedSearchParams = new URLSearchParams();
-
-            Object.entries(cleanFilters).forEach(([key, value]) => {
-                updatedSearchParams.set(
-                    key,
-                    Array.isArray(value) ? value.join(",") : value.toString()
-                );
-        });
+    Object.entries(cleanFilters).forEach(([key, value]) => {
+      updatedSearchParams.set(
+        key,
+        Array.isArray(value) ? value.join(",") : value.toString()
+      );
+    });
 
     router.push(`${pathname}?${updatedSearchParams.toString()}`);
   });
 
-
   const handleSubmit = () => {
     dispatch(setFilters(localFilters));
     updateURL(localFilters);
-  }
+  };
 
   const handleReset = () => {
     setLocalFilters(initialState.filters);
     dispatch(setFilters(initialState.filters));
     updateURL(initialState.filters);
-  }
+  };
 
   const handleAmenityChange = (amenity: AmenityEnum) => {
     setLocalFilters((prev) => ({
-      ...prev, 
+      ...prev,
       amenities: prev.amenities.includes(amenity)
-      ? prev.amenities.filter((a) => a !== amenity)
-      : [...prev.amenities, amenity],
+        ? prev.amenities.filter((a) => a !== amenity)
+        : [...prev.amenities, amenity],
     }));
-  }
+  };
 
-  // check the filters is exist
-  if (!filters) {
-    return null;
-  }
+  const handleLocationSearch = async () => {
+    try {
+      const response = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
+          localFilters.location
+        )}.json?access_token=${
+          process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN
+        }&fuzzyMatch=true`
+      );
+      const data = await response.json();
+      if (data.features && data.features.length > 0) {
+        const [lng, lat] = data.features[0].center;
+        setLocalFilters((prev) => ({
+          ...prev,
+          coordinates: [lng, lat],
+        }));
+      }
+    } catch (err) {
+      console.error("Error search location:", err);
+    }
+  };
 
+  if (!isFiltersFullOpen) return null;
 
   return (
-    <div
-    className="bg-white rounded-lg px-4 h-full overflow-auto pb-10">
-        <div className="flex flex-col space-y-6">
-        {/* ------------------------------------------------------------------------ Location Search ------------------------------------------------------------------------*/}
+    <div className="bg-white rounded-lg px-4 h-full overflow-auto pb-10">
+      <div className="flex flex-col space-y-6">
+        {/* Location */}
         <div>
-            <h4 className="font-bold mb-2">Location</h4>
-            <div className="flex items-center">
-                <Input 
-                    placeholder="Enter Location"
-                    value={filters.location}
-                    onChange={(e) =>
-                        setLocalFilters((prev) => ({
-                        ...prev,
-                        location: e.target.value,
-                        }))
-                    }
-                className="rounded-l-xl rounded-r-none border-r-0"
-                />
-
-                <Button 
-                    // onClick={handleLocationSearch}
-                    className="rounded-r-xl rounded-l-none border-l-none border-black shadow-none border hover:bg-primary-700 hover:text-primary-50"
-                    >
-                        <Search className="w-4 h-4" />
-                    </Button>
-            </div>
+          <h4 className="font-bold mb-2">Location</h4>
+          <div className="flex items-center">
+            <Input
+              placeholder="Enter location"
+              value={filters.location}
+              onChange={(e) =>
+                setLocalFilters((prev) => ({
+                  ...prev,
+                  location: e.target.value,
+                }))
+              }
+              className="rounded-l-xl rounded-r-none border-r-0"
+            />
+            <Button
+              onClick={handleLocationSearch}
+              className="rounded-r-xl rounded-l-none border-l-none border-black shadow-none border hover:bg-primary-700 hover:text-primary-50"
+            >
+              <Search className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
 
-
-        {/*------------------------------------------------------------------------ Property Type ------------------------------------------------------------------------*/}
+        {/* Property Type */}
         <div>
           <h4 className="font-bold mb-2">Property Type</h4>
           <div className="grid grid-cols-2 gap-4">
-            {/* use the Object to iterate over a PropertyIcons */}
             {Object.entries(PropertyTypeIcons).map(([type, Icon]) => (
               <div
                 key={type}
@@ -130,7 +141,7 @@ const FiltersFull = () => {
           </div>
         </div>
 
-        {/* ------------------------------------------------------------------------Price Range ------------------------------------------------------------------------*/}
+        {/* Price Range */}
         <div>
           <h4 className="font-bold mb-2">Price Range (Monthly)</h4>
           <Slider
@@ -154,8 +165,7 @@ const FiltersFull = () => {
           </div>
         </div>
 
-
-        {/* ------------------------------------------------------------------------Beds and Baths------------------------------------------------------------------------ */}
+        {/* Beds and Baths */}
         <div className="flex gap-4">
           <div className="flex-1">
             <h4 className="font-bold mb-2">Beds</h4>
@@ -198,7 +208,7 @@ const FiltersFull = () => {
           </div>
         </div>
 
-            {/* ------------------------------------------------------------------------Square Feet------------------------------------------------------------------------ */}
+        {/* Square Feet */}
         <div>
           <h4 className="font-bold mb-2">Square Feet</h4>
           <Slider
@@ -223,8 +233,7 @@ const FiltersFull = () => {
           </div>
         </div>
 
-
-            {/* ------------------------------------------------------------------------Amenities ------------------------------------------------------------------------*/}
+        {/* Amenities */}
         <div>
           <h4 className="font-bold mb-2">Amenities</h4>
           <div className="flex flex-wrap gap-2">
@@ -248,8 +257,7 @@ const FiltersFull = () => {
           </div>
         </div>
 
-
-            {/* ------------------------------------------------------------------------Available From------------------------------------------------------------------------ */}
+        {/* Available From */}
         <div>
           <h4 className="font-bold mb-2">Available From</h4>
           <Input
@@ -269,7 +277,7 @@ const FiltersFull = () => {
           />
         </div>
 
-        {/* ------------------------------------------------------------------------Apply and Reset buttons------------------------------------------------------------------------ */}
+        {/* Apply and Reset buttons */}
         <div className="flex gap-4 mt-6">
           <Button
             onClick={handleSubmit}
@@ -285,9 +293,9 @@ const FiltersFull = () => {
             Reset Filters
           </Button>
         </div>
-        </div>
+      </div>
     </div>
-  )
-}
+  );
+};
 
-export default FiltersFull
+export default FiltersFull;
